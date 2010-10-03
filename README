@@ -1,0 +1,21 @@
+e-walkeylife2 reader for Linux
+------------------------------
+Read the data from e-walkeylife2 (KONAMI's pedometer).
+Currently, the hourly log (walk/run/total per hour) for 30 days,
+and the daily log for 1 year are readable.
+
+Build
+-----
+This program needs libusb-1.0 to build.
+In some distributions, libusb-1.0 is provided as package named "libusb1" or "libusb1.0".
+You need also a package named "libusb1-devel" etc.
+
+After install the libusb-1.0, run the "make" command to build the sources.
+
+Usage
+-----
+After connect the e-walkeylife2 to your computer, run the commands below.
+You may need root priviledges to access the device.
+
+% sudo ./usb-dump > dump.log         # read out the memory of the device and save as "mem.dat" file.
+% ./show-history                     # display the hourly log and daily log.
