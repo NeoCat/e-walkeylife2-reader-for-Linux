@@ -13,15 +13,15 @@ using namespace std;
 //#define DEBUG
 
 struct dev_info {
-	libusb_context *ctx;	
+	libusb_context *ctx;
 	libusb_device_handle *handle;
 	uint8_t ep;
 };
 
 void block_signal(bool block)
 {
-	sigset_t sigset;  
-	sigemptyset(&sigset);  
+	sigset_t sigset;
+	sigemptyset(&sigset);
 	sigaddset(&sigset, SIGINT);
 	sigaddset(&sigset, SIGTERM);
 	sigprocmask(block?SIG_BLOCK:SIG_UNBLOCK, &sigset, NULL);
@@ -59,10 +59,89 @@ void make_msg(unsigned char msg[8], unsigned char bank,
 	calc_chksum(msg, 2, 7);
 }
 
-void write_status(dev_info *d, unsigned char status[7])
+
+void open_device(dev_info *d)
 {
-	unsigned char msg[8]; // {0xe0, 0xa5, 0x02, 0x00, 0xf7, 0x41, 0x07, 0x4c};
-	make_msg(msg, 0, 0xf741, 7, true);
+	int ret;
+	d->ctx = NULL;
+	ret = libusb_init(&d->ctx);
+	if (ret < 0)
+		throw "libusb_init failed";
+#if DEBUG
+	libusb_set_debug(d->ctx, 3);
+#endif
+	d->handle = libusb_open_device_with_vid_pid(
+		NULL, VENDOR_ID, PRODUCT_ID);
+	if (!d->handle)
+		throw "open failed";
+
+	//Detach driver if kernel driver is attached.
+	if (libusb_kernel_driver_active(d->handle, 0) == 1) {
+		cerr << "Kernel Driver Active" << endl;
+
+		if(libusb_detach_kernel_driver(d->handle, 0) == 0) {
+			cerr << "Kernel Driver Detached!" << endl;
+			ret = true;
+		} else {
+			ret = false;
+		}
+	}
+
+	//claim interface 0 (the first) of device (mine had jsut 1)
+	ret = libusb_claim_interface(d->handle, 0);
+	//cout << "claim interface 0: " << ret << endl;
+	if (ret < 0)
+		throw "Claim Interface failed";
+
+	libusb_device *device = libusb_get_device(d->handle);
+	libusb_config_descriptor *config;
+	const libusb_interface *inter;
+	const libusb_interface_descriptor *interdesc;
+	const libusb_endpoint_descriptor *epdesc;
+
+	libusb_get_config_descriptor(device, 0, &config);
+
+	// cout << "find endpoint" << endl;
+	for(int i = 0; i < config->bNumInterfaces; i++) {
+		inter = &config->interface[i];
+		//cout << "Number of alternate settings: "<< inter->num_altsetting << " | ";
+
+		for(int j = 0; j < inter->num_altsetting; j++) {
+			interdesc = &inter->altsetting[j];
+
+			//cout << "Interface Number: " << (int) interdesc->bInterfaceNumber << " | ";
+			//cout << "Number of endpoints: "<< (int) interdesc->bNumEndpoints << " | ";
+
+			for(int k = 0; k < (int) interdesc->bNumEndpoints; k++) {
+				epdesc = &interdesc->endpoint[k];
+				//cout << "Descriptor Type: " << (int) epdesc->bDescriptorType << " | ";
+				d->ep = epdesc->bEndpointAddress;
+				//cout <<"EP Address: " << (int) d->ep << " | " << endl;
+				break;
+			}
+		}
+	}
+}
+
+void close_device(dev_info *d)
+{
+	if (d->handle) {
+		int ret = libusb_release_interface(d->handle, 0); //release the claimed interface
+		if(ret != 0)
+			cerr << "Cannot Release Interface" << endl;
+		libusb_close(d->handle);
+	}
+	if (d->ctx)
+		libusb_exit(d->ctx);
+}
+
+void write_addr(dev_info *d, unsigned char *data, unsigned char bank,
+		unsigned short addr, int size)
+{
+	if (size > 7)
+		throw "Write size too large";
+	unsigned char msg[8];
+	make_msg(msg, bank, addr, size, true);
 	block_signal(true);
 	int ret = libusb_control_transfer(d->handle, 0x21, 0x09, 0x0200, 0x0000, msg, sizeof(msg), 2000);
 	if (ret < 0)
@@ -79,8 +158,9 @@ void write_status(dev_info *d, unsigned char status[7])
 	if (msg[0] != 0xe0 || msg[1] != 0xa5 || msg[2] != 0x03)
 		throw "Invalid response on write";
 
-	memcpy(msg, status, 7);
-	calc_chksum(msg, 0, 7);
+	memcpy(msg, data, size);
+	calc_chksum(msg, 0, size);
+	memset(msg+size+1, 0, 8-size-1);
 	block_signal(true);
 	ret = libusb_control_transfer(d->handle, 0x21, 0x09, 0x0200, 0x0000, msg, sizeof(msg), 2000);
 	if (ret < 0)
@@ -95,32 +175,6 @@ void write_status(dev_info *d, unsigned char status[7])
 #endif
 	if (msg[0] != 0xe0 || msg[1] != 0xa5 || msg[2] != 0x02)
 		throw "Invalid response after write";
-}
-
-void lcd_test(dev_info *d)
-{
-	unsigned char status[7];
-	memset(status, 0, 7);
-	for (int i = 0; i < 7; i++) {
-		for (int j = 0; j < 8; j++) {
-			status[i] |= 1 << j;
-			write_status(d, status);
-			usleep(100000);
-		}
-	}
-}
-
-void disp_num(dev_info *d, int num)
-{
-	unsigned char status[7] = {0xcc, 0x63, 0xcc, 0x63, 0xcc, 0, 0};
-	const unsigned char dig[11] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0};
-	if (num >= 0 && num < 100) {
-		int tens = (num / 10) % 10;
-		tens = !tens ? 10 : tens;
-		status[5] = dig[num % 10];
-		status[6] = dig[tens];
-	}
-	write_status(d, status);
 }
 
 int read_addr(dev_info *d, unsigned char *buf, unsigned char bank,
@@ -175,81 +229,37 @@ int read_addr(dev_info *d, unsigned char *buf, unsigned char bank,
 #endif
 }
 
-void open_device(dev_info *d)
+
+void write_status(dev_info *d, unsigned char status[7])
 {
-	int ret;
-	d->ctx = NULL;
-	ret = libusb_init(&d->ctx);
-	if (ret < 0) 
-		throw "libusb_init failed";
-#if DEBUG
-	libusb_set_debug(d->ctx, 3);
-#endif
-	d->handle = libusb_open_device_with_vid_pid(
-		NULL, VENDOR_ID, PRODUCT_ID);
-	if (!d->handle)
-		throw "open failed";
-	
-	//Detach driver if kernel driver is attached.
-	if (libusb_kernel_driver_active(d->handle, 0) == 1) { 
-		cerr << "Kernel Driver Active" << endl;
-		
-		if(libusb_detach_kernel_driver(d->handle, 0) == 0) {
-			cerr << "Kernel Driver Detached!" << endl;
-			ret = true;
-		} else {
-			ret = false;
-		}
-	}
+	write_addr(d, status, 0, 0xf741, 7);
+}
 
-	//claim interface 0 (the first) of device (mine had jsut 1)
-	ret = libusb_claim_interface(d->handle, 0); 
-	//cout << "claim interface 0: " << ret << endl;
-	if (ret < 0) 
-		throw "Claim Interface failed";
-
-	libusb_device *device = libusb_get_device(d->handle);
-	libusb_config_descriptor *config;
-	const libusb_interface *inter;
-	const libusb_interface_descriptor *interdesc;
-	const libusb_endpoint_descriptor *epdesc;
-
-	libusb_get_config_descriptor(device, 0, &config);
-	
-	// cout << "find endpoint" << endl;
-	for(int i = 0; i < config->bNumInterfaces; i++) {
-		inter = &config->interface[i];
-		//cout << "Number of alternate settings: "<< inter->num_altsetting << " | ";
-
-		for(int j = 0; j < inter->num_altsetting; j++) {
-			interdesc = &inter->altsetting[j];
-
-			//cout << "Interface Number: " << (int) interdesc->bInterfaceNumber << " | ";
-			//cout << "Number of endpoints: "<< (int) interdesc->bNumEndpoints << " | ";
-			
-			for(int k = 0; k < (int) interdesc->bNumEndpoints; k++) {
-				epdesc = &interdesc->endpoint[k];
-				//cout << "Descriptor Type: " << (int) epdesc->bDescriptorType << " | ";
-				d->ep = epdesc->bEndpointAddress;
-				//cout <<"EP Address: " << (int) d->ep << " | " << endl;
-				break;
-			}
+void lcd_test(dev_info *d)
+{
+	unsigned char status[7];
+	memset(status, 0, 7);
+	for (int i = 0; i < 7; i++) {
+		for (int j = 0; j < 8; j++) {
+			status[i] |= 1 << j;
+			write_status(d, status);
+			usleep(100000);
 		}
 	}
 }
 
-void close_device(dev_info *d)
+void disp_num(dev_info *d, int num)
 {
-	if (d->handle) {
-		int ret = libusb_release_interface(d->handle, 0); //release the claimed interface
-		if(ret != 0)
-			cerr << "Cannot Release Interface" << endl;
-		libusb_close(d->handle);
+	unsigned char status[7] = {0xcc, 0x63, 0xcc, 0x63, 0xcc, 0, 0};
+	const unsigned char dig[11] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0};
+	if (num >= 0 && num < 100) {
+		int tens = (num / 10) % 10;
+		tens = !tens ? 10 : tens;
+		status[5] = dig[num % 10];
+		status[6] = dig[tens];
 	}
-	if (d->ctx)
-		libusb_exit(d->ctx);
+	write_status(d, status);
 }
-
 
 void read_mem(dev_info *d)
 {
@@ -283,6 +293,24 @@ void read_clock(dev_info *d)
 	       2000 + buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 }
 
+void write_clock(dev_info *d)
+{
+	time_t t;
+	time(&t);
+	struct tm *lt = localtime(&t);
+	unsigned char buf[6];
+	buf[0] = lt->tm_year + 1900 - 2000;
+	buf[1] = lt->tm_mon + 1;
+	buf[2] = lt->tm_mday;
+	buf[3] = lt->tm_hour;
+	buf[4] = lt->tm_min;
+	buf[5] = lt->tm_sec;
+	write_addr(d, buf, 0, 0xfb80, 6);
+	printf(" -> %4d/%02d/%02d %2d:%02d:%02d\n",
+	       buf[0]+2000, buf[1], buf[2], buf[3], buf[4], buf[5]);
+}
+
+
 int main(int argc, char **argv)
 {
 	dev_info d;
@@ -290,8 +318,12 @@ int main(int argc, char **argv)
 	try {
 		open_device(&d);
 		read_clock(&d);
-		//lcd_test(&d);
-		read_mem(&d);
+		if (argc > 1 && !strcmp(argv[1], "-c")) {
+			write_clock(&d);
+		} else {
+			//lcd_test(&d);
+			read_mem(&d);
+		}
 	} catch (const char* err) {
 		block_signal(false);
 		cerr << err << endl;

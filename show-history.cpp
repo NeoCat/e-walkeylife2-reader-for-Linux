@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
 	int year = t->tm_year+1900;
 	int mon = t->tm_mon+1;
 	int day = t->tm_mday;
-	printf("mem.dat mod time: %4d/%02d/%02d %2d:%02d:%02d\n",
+	printf("#mem.dat mod time: %4d/%02d/%02d %2d:%02d:%02d\n",
 	       year, mon, day, t->tm_hour, t->tm_min, t->tm_sec);
 
 	FILE *f = fopen("mem.dat", "r");
@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
 		printf("# %4d/%02d/%02d total: %6d %6d %6d\n", year, m2, d, wsum, rsum, wsum+rsum);
 	}
 
-	printf("\n# DAILY LOG\n");
+	printf("\n\n# DAILY LOG\n");
 	int y = year-1;
 	for (int m = mon; y != year || m <= mon; m = m+1 == 13 ? 1 : m+1) {
 		if (m == 1)
