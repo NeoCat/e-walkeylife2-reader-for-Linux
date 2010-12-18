@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
 
 	printf("\n\n# DAILY LOG\n");
 	int y = year-1;
-	for (int m = mon; y != year || m <= mon; m = m+1 == 13 ? 1 : m+1) {
+	for (int m = mon; y <= year; m = m+1 == 13 ? 1 : m+1) {
 		if (m == 1)
 			y++;
 		for (int d = 1; d <= eod(y,m); d++) {
