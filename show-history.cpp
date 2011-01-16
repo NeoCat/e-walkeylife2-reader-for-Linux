@@ -31,19 +31,20 @@ int main(int argc, char *argv[])
 	struct history hist;
 	struct stat st;
 
-	int ret = stat("mem.dat", &st); 
+	const char *fname = argc > 1 ? argv[1] : "mem.dat";
+	int ret = stat(fname, &st);
 	if (ret < 0) {
-		perror("mem.dat");
+		perror("stat file");
 		return 1;
 	}
 	struct tm *t = localtime(&st.st_mtime);
 	int year = t->tm_year+1900;
 	int mon = t->tm_mon+1;
 	int day = t->tm_mday;
-	printf("#mem.dat mod time: %4d/%02d/%02d %2d:%02d:%02d\n",
+	printf("#file mod time: %4d/%02d/%02d %2d:%02d:%02d\n",
 	       year, mon, day, t->tm_hour, t->tm_min, t->tm_sec);
 
-	FILE *f = fopen("mem.dat", "r");
+	FILE *f = fopen(fname, "r");
 	if (!f) {
 		perror("fopen");
 		return 1;
@@ -53,11 +54,15 @@ int main(int argc, char *argv[])
 
 	printf("\n# HOURLY LOG\n");
 	int m = mon-1;
+	int y = year - (m?0:1);
 	for (int d = day+1 > eod(year,mon-1) ? 1 : day+1;
 	     m != mon || d <= day;
 	     d = d+1 > eod(year,mon-1) ? 1 : d+1) {
-		if (d == 1)
+		if (d == 1) {
 			m++;
+			if (m == 1)
+				y++;
+		}
 		int m2 = !m ? 12 : m;
 		if (hist.day[d].mon != m2)
 			continue;
@@ -65,15 +70,15 @@ int main(int argc, char *argv[])
 		for (int i = 0; i < 24; i++) {
 			int walk = ntohs(hist.day[d].hour[i][0]);
 			int run  = ntohs(hist.day[d].hour[i][1]);
-			printf("%4d/%02d/%02d %02d: %5d %5d %5d\n", year, m2, d, i, walk, run, walk+run);
+			printf("%4d/%02d/%02d %02d: %5d %5d %5d\n", y, m2, d, i, walk, run, walk+run);
 			wsum += walk;
 			rsum += run;
 		}
-		printf("# %4d/%02d/%02d total: %6d %6d %6d\n", year, m2, d, wsum, rsum, wsum+rsum);
+		printf("# %4d/%02d/%02d total: %6d %6d %6d\n", y, m2, d, wsum, rsum, wsum+rsum);
 	}
 
 	printf("\n\n# DAILY LOG\n");
-	int y = year-1;
+	y = year-(mon == 1 ? 2 : 1);
 	for (int m = mon; y <= year; m = m+1 == 13 ? 1 : m+1) {
 		if (m == 1)
 			y++;
